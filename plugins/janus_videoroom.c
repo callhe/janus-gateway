@@ -3616,7 +3616,7 @@ struct janus_plugin_result *janus_videoroom_handle_message(janus_plugin_session 
 		json_object_set_new(response, "room", json_integer(room_id));
 		json_object_set_new(response, "rtp_forwarders", list);
 		goto plugin_response;
-	} else if(!strcasecmp(request_text, "join") || !strcasecmp(request_text, "joinandconfigure")
+	} else if(!strcasecmp(request_text, "join") || !strcasecmp(request_text, "joinandconfigure") || !strcasecmp(request_text, "configureav") 
 			|| !strcasecmp(request_text, "configure") || !strcasecmp(request_text, "publish") || !strcasecmp(request_text, "unpublish")
 			|| !strcasecmp(request_text, "start") || !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "switch")
 			|| !strcasecmp(request_text, "leave")) {
@@ -4788,6 +4788,60 @@ static void *janus_videoroom_handler(void *data) {
 				error_code = JANUS_VIDEOROOM_ERROR_ALREADY_JOINED;
 				g_snprintf(error_cause, 512, "Already in as a publisher on this handle");
 				goto error;
+			} else if(!strcasecmp(request_text, "configureav")) {
+				//json_t *audio = json_object_get(root, "audio");
+				json_t *video = json_object_get(root, "video");
+				//if(video) {
+				//	gboolean video_active = json_is_true(video);
+				//	if(session->started) {
+				//		janus_mutex_lock(&participant->subscribers_mutex);
+				//		GSList *ps = participant->subscribers;
+				//		json_object_set_new(root, "videoroom", json_string("configureav"));
+				//		while(ps) {
+				//			janus_videoroom_subscriber *l = (janus_videoroom_subscriber *)ps->data;
+				//			if(l) {
+				//				l->context.v_seq_reset = TRUE;
+				//				gateway->push_event(l->session->handle, &janus_videoroom_plugin, NULL, root, NULL);
+				//			}
+				//			ps = ps->next;
+				//		}
+				//		janus_mutex_unlock(&participant->subscribers_mutex);
+				//	}
+				//	participant->video_active = video_active;
+				//	JANUS_LOG(LOG_VERB, "Setting video property: %s (room %"SCNu64", user %"SCNu64")\n", participant->video_active ? "true" : "false", participant->room_id, participant->user_id);
+				//}
+				JANUS_VALIDATE_JSON_OBJECT(root, room_parameters,
+						error_code, error_cause, TRUE,
+						JANUS_VIDEOROOM_ERROR_MISSING_ELEMENT, JANUS_VIDEOROOM_ERROR_INVALID_ELEMENT);
+				if(error_code != 0)
+					goto error;
+				json_t *room = json_object_get(root, "room");
+				//guint64 room_id = json_integer_value(room);
+				janus_mutex_lock(&rooms_mutex);
+				janus_videoroom *videoroom = NULL;
+				error_code = janus_videoroom_access_room(root, FALSE, FALSE, &videoroom, error_cause, sizeof(error_cause));
+				janus_mutex_unlock(&rooms_mutex);
+				if(error_code != 0)
+					goto error;
+				janus_refcount_increase(&videoroom->ref);
+				/* Return a list of all participants (whether they're publishing or not) */
+				GHashTableIter iter;
+				gpointer value;
+				janus_mutex_lock(&videoroom->mutex);
+				g_hash_table_iter_init(&iter, videoroom->participants);
+				json_t *response = json_object();
+				json_object_set_new(response, "videoroom", json_string("configureav"));
+				json_object_set_new(response, "video", video);
+				while (!g_atomic_int_get(&videoroom->destroyed) && g_hash_table_iter_next(&iter, NULL, &value)) {
+					janus_videoroom_publisher *p = value;
+					if(p->session->started) {
+						gateway->push_event(p->session->handle, &janus_videoroom_plugin, NULL, response, NULL);
+					}
+				}
+				janus_mutex_unlock(&videoroom->mutex);
+				janus_refcount_decrease(&videoroom->ref);
+				json_decref(response);
+
 			} else if(!strcasecmp(request_text, "configure") || !strcasecmp(request_text, "publish")) {
 				if(!strcasecmp(request_text, "publish") && participant->sdp) {
 					janus_refcount_decrease(&participant->ref);
